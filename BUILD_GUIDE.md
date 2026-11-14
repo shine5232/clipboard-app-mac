@@ -59,7 +59,6 @@ source venv/bin/activate
 # 打包命令
 pyinstaller --name="剪贴板助手" \
     --windowed \
-    --onefile \
     --icon=icon.icns \
     --osx-bundle-identifier=com.clipboardhelper.app \
     --add-data="ui:ui" \
@@ -79,7 +78,7 @@ pyinstaller --name="剪贴板助手" \
 
 - `--name`: 应用名称
 - `--windowed`: 不显示终端窗口
-- `--onefile`: 打包成单个可执行文件
+- macOS 的 `.app` 使用目录模式，不要加 `--onefile`，否则容易缺 Qt 和 pyobjc 依赖。
 - `--icon`: 应用图标 (需要准备 .icns 格式图标)
 - `--osx-bundle-identifier`: macOS Bundle ID
 - `--add-data`: 添加资源文件
@@ -101,7 +100,6 @@ rm -rf build dist *.spec
 # 执行打包
 pyinstaller --name="剪贴板助手" \
     --windowed \
-    --onefile \
     --osx-bundle-identifier=com.clipboardhelper.app \
     --hidden-import=PyQt5 \
     --hidden-import=pynput \
@@ -129,7 +127,7 @@ chmod +x build.sh
 ## 快捷键说明
 
 - `Cmd+Shift+C`: 显示/隐藏主窗口
-- `Cmd+Space`: 批量粘贴剪贴板内容
+- `Cmd+Option+V`: 批量粘贴剪贴板内容
 - `Cmd+Shift+Q`: 退出程序
 
 ## 功能特性

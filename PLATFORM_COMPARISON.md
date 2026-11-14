@@ -18,7 +18,7 @@
 | 功能 | Windows | macOS |
 |------|---------|-------|
 | 显示/隐藏 | Ctrl+Shift+C | Cmd+Shift+C |
-| 批量粘贴 | Ctrl+Space | Cmd+Space |
+| 批量粘贴 | Ctrl+Space | Cmd+Option+V |
 | 退出程序 | Ctrl+Shift+Q | Cmd+Shift+Q |
 
 ## 技术实现差异
@@ -121,7 +121,7 @@ pyinstaller --onefile --windowed main.py
 
 ```bash
 # 使用 PyInstaller 生成 .app
-pyinstaller --windowed --onefile --osx-bundle-identifier=... main.py
+pyinstaller --windowed --osx-bundle-identifier=... main.py
 ```
 
 生成文件: `dist/剪贴板助手.app`

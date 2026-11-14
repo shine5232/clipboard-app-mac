@@ -23,7 +23,6 @@ rm -rf build dist *.spec
 echo "开始打包..."
 pyinstaller --name="剪贴板助手" \
     --windowed \
-    --onefile \
     --osx-bundle-identifier=com.clipboardhelper.app \
     --hidden-import=PyQt5 \
     --hidden-import=PyQt5.QtCore \

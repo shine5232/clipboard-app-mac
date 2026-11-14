@@ -62,7 +62,8 @@ def set_foreground_window(window_info):
         # 根据 pid 激活应用
         app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
         if app:
-            result = app.activateWithOptions_(1 << 1)  # NSApplicationActivateIgnoringOtherApps
+            # 1: NSApplicationActivateAllWindows, 2: NSApplicationActivateIgnoringOtherApps
+            result = app.activateWithOptions_((1 << 0) | (1 << 1))
             return bool(result)
         return False
     except Exception:

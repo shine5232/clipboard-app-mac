@@ -4,8 +4,7 @@
 """
 
 import json
-import winreg
-import os
+import subprocess
 from pathlib import Path
 from PyQt5.QtCore import QObject
 
@@ -21,13 +20,7 @@ class DataModel:
             data_dir: 数据目录路径（可选）
         """
         if data_dir is None:
-            # 使用用户 AppData 目录，确保打包后也能正常读写
-            appdata_dir = os.getenv('APPDATA')  # 获取 C:\Users\用户名\AppData\Roaming
-            if appdata_dir:
-                data_dir = Path(appdata_dir) / 'ClipboardHelper'
-            else:
-                # 如果获取不到 AppData，使用用户主目录
-                data_dir = Path.home() / '.clipboard_helper'
+            data_dir = Path.home() / 'Library' / 'Application Support' / 'ClipboardHelper'
         else:
             data_dir = Path(data_dir)
 
@@ -125,19 +118,16 @@ class DataModel:
 
     @staticmethod
     def detect_system_theme():
-        """
-        检测 Windows 系统主题
-
-        Returns:
-            str: 'light' 或 'dark'
-        """
+        """检测 macOS 外观。未设置 AppleInterfaceStyle 时为浅色。"""
         try:
-            key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+            result = subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True,
+                text=True,
+                timeout=1,
             )
-            value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
-            winreg.CloseKey(key)
-            return 'light' if value == 1 else 'dark'
+            if result.returncode == 0 and "dark" in result.stdout.lower():
+                return "dark"
         except Exception:
-            return 'light'  # 默认日间模式
+            pass
+        return "light"

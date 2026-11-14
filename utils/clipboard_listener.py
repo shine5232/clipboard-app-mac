@@ -1,25 +1,25 @@
 """
 macOS 剪贴板监听器
-使用 PyQt5 剪贴板变化信号
+后台轮询 NSPasteboard.changeCount。
+Qt 的 dataChanged 在 macOS 上只有应用激活时才会收到其他应用的复制。
 """
 
-from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QObject, pyqtSignal, QTimer
+
+from utils.clipboard_utils import get_clipboard_change_count
 
 
 class ClipboardListener(QObject):
-    """
-    剪贴板监听器
-    使用 PyQt5 的剪贴板变化信号监听剪贴板变化
-    """
+    """剪贴板监听器"""
 
-    # 剪贴板变化信号
     clipboard_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._started = False
-        self.clipboard = QApplication.clipboard()
+        self._change_count = None
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._poll)
 
     def start(self):
         """开始监听剪贴板"""
@@ -27,8 +27,8 @@ class ClipboardListener(QObject):
             return True
 
         try:
-            # 连接剪贴板变化信号
-            self.clipboard.dataChanged.connect(self._on_clipboard_changed)
+            self._change_count = get_clipboard_change_count()
+            self._timer.start(300)
             self._started = True
             return True
         except Exception:
@@ -36,16 +36,16 @@ class ClipboardListener(QObject):
 
     def stop(self):
         """停止监听剪贴板"""
-        if not self._started:
+        self._timer.stop()
+        self._started = False
+
+    def _poll(self):
+        change_count = get_clipboard_change_count()
+        if change_count is None:
             return
-
-        try:
-            # 断开剪贴板变化信号
-            self.clipboard.dataChanged.disconnect(self._on_clipboard_changed)
-            self._started = False
-        except Exception:
-            pass
-
-    def _on_clipboard_changed(self):
-        """剪贴板内容已更新,发出信号"""
-        self.clipboard_changed.emit()
+        if self._change_count is None:
+            self._change_count = change_count
+            return
+        if change_count != self._change_count:
+            self._change_count = change_count
+            self.clipboard_changed.emit()

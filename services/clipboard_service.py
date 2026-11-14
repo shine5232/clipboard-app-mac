@@ -3,11 +3,12 @@
 处理剪贴板数据的核心业务逻辑
 """
 
+import os
 import time
 from datetime import datetime
 from PyQt5.QtCore import QObject, pyqtSignal
-from utils.clipboard_utils import get_clipboard_text, set_clipboard_text, process_clipboard_text
-from utils.keyboard_simulator import simulate_paste
+from utils.clipboard_utils import set_clipboard_text, process_clipboard_text
+from utils.keyboard_simulator import simulate_paste, simulate_return
 from utils.window_manager import get_foreground_window, set_foreground_window
 
 
@@ -169,76 +170,76 @@ class ClipboardService(QObject):
         # 只在窗口隐藏时发送通知
         return self.add_clipboard_item(new_text, silent=is_window_visible)
 
-    def prepare_paste_content(self):
-        """
-        准备粘贴内容
+    def build_paste_steps(self):
+        """按输出模式生成一次批量粘贴步骤。顺序和倒序会在条目之间加回车。"""
+        texts = [
+            item["text"] if isinstance(item, dict) else item
+            for item in self.clipboard_data
+        ]
+        if not texts:
+            return []
 
-        Returns:
-            tuple: (要粘贴的文本, 是否成功准备)
-        """
-        if not self.clipboard_data:
-            return None, False
+        if self.output_mode == "reverse":
+            texts = list(reversed(texts))
 
-        text_to_paste = None
-
-        if self.output_mode == 'sequential':
-            # 顺序输出：先进先出（FIFO）
-            if self.sequential_index < 0 or self.sequential_index >= len(self.clipboard_data):
-                self.sequential_index = 0
-
-            current_item = self.clipboard_data[self.sequential_index]
-            text_to_paste = current_item['text'] if isinstance(current_item, dict) else current_item
-
-        elif self.output_mode == 'reverse':
-            # 倒序输出：后进先出（LIFO）
-            if self.sequential_index < 0 or self.sequential_index >= len(self.clipboard_data):
-                self.sequential_index = len(self.clipboard_data) - 1
-
-            current_item = self.clipboard_data[self.sequential_index]
-            text_to_paste = current_item['text'] if isinstance(current_item, dict) else current_item
-
+        if self.output_mode in ("sequential", "reverse"):
+            steps = [
+                {"text": text, "press_enter_after": index < len(texts) - 1}
+                for index, text in enumerate(texts)
+            ]
         else:
-            # 逗号拼接模式
-            texts = [item['text'] if isinstance(item, dict) else item for item in self.clipboard_data]
-            text_to_paste = ','.join(texts)
+            steps = [{"text": ",".join(texts), "press_enter_after": False}]
 
-        if text_to_paste:
-            # 记录粘贴信息
-            self.last_pasted_text = text_to_paste
-            self.last_paste_time = time.time()
-            self.paste_ignore_until = time.time() + 1.5
+        self.paste_ignore_until = time.time() + 1.0 + len(steps) * 0.6
+        self.last_paste_time = time.time()
+        return steps
 
-            # 设置剪贴板
-            if set_clipboard_text(text_to_paste):
-                self.last_clipboard_text = text_to_paste
-                return text_to_paste, True
+    def remember_pasted_text(self, text):
+        """记录刚写入剪贴板的内容，避免被监听器再次收录。"""
+        self.last_pasted_text = text
+        self.last_clipboard_text = text
+        self.last_paste_time = time.time()
+        self.paste_ignore_until = max(self.paste_ignore_until, time.time() + 1.5)
 
-        return None, False
+    def place_paste_text(self, text):
+        """把待粘贴文本写入系统剪贴板。"""
+        if not set_clipboard_text(text):
+            return False
+        self.remember_pasted_text(text)
+        return True
 
-    def update_sequential_index(self):
-        """更新顺序输出索引（在粘贴完成后调用）"""
-        if self.output_mode == 'sequential':
-            self.sequential_index += 1
-            if self.sequential_index >= len(self.clipboard_data):
-                self.sequential_index = 0
-        elif self.output_mode == 'reverse':
-            self.sequential_index -= 1
-            if self.sequential_index < 0:
-                self.sequential_index = len(self.clipboard_data) - 1
+    def send_paste_key(self):
+        """发送 Command+V。"""
+        return simulate_paste()
 
-    def execute_paste(self):
-        """执行粘贴操作"""
-        simulate_paste()
+    def send_enter_key(self):
+        """发送回车。"""
+        return simulate_return()
+
+    def capture_paste_target(self):
+        """前台不是自己时记下目标应用。返回自己当前是否处于前台。"""
+        current = get_foreground_window()
+        if not current:
+            return False
+        if current.get("pid") == os.getpid():
+            return True
+        self.previous_window = current
+        return False
 
     def save_previous_window(self):
-        """保存当前活动窗口"""
-        self.previous_window = get_foreground_window()
+        """保存当前活动应用。自己处于前台时不覆盖。"""
+        current = get_foreground_window()
+        if not current or current.get("pid") == os.getpid():
+            return
+        self.previous_window = current
 
     def restore_previous_window(self):
-        """恢复前一个窗口"""
-        if self.previous_window:
-            set_foreground_window(self.previous_window)
-            time.sleep(0.1)
+        """恢复之前保存的应用焦点。"""
+        if not self.previous_window:
+            return False
+        if self.previous_window.get("pid") == os.getpid():
+            return False
+        return bool(set_foreground_window(self.previous_window))
 
     def load_data(self, data):
         """

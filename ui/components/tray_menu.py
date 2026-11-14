@@ -268,25 +268,24 @@ class TrayMenu(QWidget):
         self.adjustSize()
 
         # 获取鼠标位置和屏幕信息
+        from utils.screen_geometry import available_screen_geometry
         cursor_pos = QCursor.pos()
-        screen = QApplication.desktop().screenGeometry()
+        screen = available_screen_geometry(cursor_pos)
 
-        # 计算菜单位置，确保不超出屏幕
         menu_width = self.width()
         menu_height = self.height()
 
         x = cursor_pos.x()
-        y = cursor_pos.y() - menu_height  # 在鼠标上方显示
+        y = cursor_pos.y() - menu_height
 
-        # 边界检查
-        if x + menu_width > screen.width():
-            x = screen.width() - menu_width
-        if x < 0:
-            x = 0
-        if y < 0:
-            y = cursor_pos.y()  # 如果上方空间不够，显示在下方
-        if y + menu_height > screen.height():
-            y = screen.height() - menu_height
+        if x + menu_width > screen.left() + screen.width():
+            x = screen.left() + screen.width() - menu_width
+        if x < screen.left():
+            x = screen.left()
+        if y < screen.top():
+            y = cursor_pos.y()
+        if y + menu_height > screen.top() + screen.height():
+            y = screen.top() + screen.height() - menu_height
 
         self.move(x, y)
         self.show()

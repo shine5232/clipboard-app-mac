@@ -19,6 +19,8 @@ from PyQt5.QtGui import QIcon, QFont, QBrush, QColor, QCursor
 
 # 导入工具模块
 from utils.clipboard_utils import get_clipboard_text
+from utils.screen_geometry import available_screen_geometry
+from utils.permissions import accessibility_is_trusted
 from utils.clipboard_listener import ClipboardListener
 
 # 导入业务逻辑层
@@ -545,7 +547,7 @@ class ClipboardWindow(QWidget):
 
             # macOS 使用 Command 键替代 Ctrl
             self.hotkey_listener = GlobalHotKeys({
-                '<cmd>+<space>': on_paste_hotkey,  # Command+Space
+                '<cmd>+<alt>+v': on_paste_hotkey,  # Command+Option+V
                 '<cmd>+<shift>+c': on_toggle_hotkey,  # Command+Shift+C
                 '<cmd>+<shift>+q': on_quit_hotkey  # Command+Shift+Q
             })
@@ -554,21 +556,49 @@ class ClipboardWindow(QWidget):
             pass  # 快捷键注册失败
 
     def do_paste(self):
-        """执行批量粘贴:自动粘贴到当前位置"""
-        # 使用服务层准备粘贴内容
-        text_to_paste, success = self.clipboard_service.prepare_paste_content()
+        """把列表内容粘贴到之前的应用。顺序和倒序会在条目之间按回车。"""
+        steps = self.clipboard_service.build_paste_steps()
+        if not steps:
+            return
 
-        if success and text_to_paste:
-            # 延迟250ms执行粘贴
-            QTimer.singleShot(250, self._execute_paste)
+        self._paste_steps = steps
+        self._paste_index = 0
+        we_are_front = self.clipboard_service.capture_paste_target()
+        if we_are_front:
+            self.clipboard_service.restore_previous_window()
+            if self.isVisible():
+                self.hide()
+            delay = 220
+        else:
+            delay = 40
+        QTimer.singleShot(delay, self._paste_current_step)
 
-    def _execute_paste(self):
-        """执行实际的粘贴操作"""
-        # 执行粘贴
-        self.clipboard_service.execute_paste()
+    def _paste_current_step(self):
+        """写入当前条目并排队发送按键。"""
+        if self._paste_index >= len(getattr(self, "_paste_steps", [])):
+            return
 
-        # 更新索引
-        self.clipboard_service.update_sequential_index()
+        step = self._paste_steps[self._paste_index]
+        if not self.clipboard_service.place_paste_text(step["text"]):
+            return
+        QTimer.singleShot(60, lambda current=step: self._send_paste_keys(current))
+
+    def _send_paste_keys(self, step):
+        """发送粘贴，必要时继续发送回车。"""
+        self.clipboard_service.send_paste_key()
+        if step.get("press_enter_after"):
+            QTimer.singleShot(50, self._send_enter_and_continue)
+            return
+
+        self._paste_index += 1
+        if self._paste_index < len(self._paste_steps):
+            QTimer.singleShot(80, self._paste_current_step)
+
+    def _send_enter_and_continue(self):
+        """发送回车后处理下一条。"""
+        self.clipboard_service.send_enter_key()
+        self._paste_index += 1
+        QTimer.singleShot(80, self._paste_current_step)
 
     def show_notification(self, message):
         """显示系统通知"""
@@ -588,8 +618,8 @@ class ClipboardWindow(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground, True)
 
         self.setFixedSize(360, 560)
-        screen = QApplication.desktop().screenGeometry()
-        self.move(screen.width() - 380, screen.height() - 600)
+        screen = available_screen_geometry(self.frameGeometry().center())
+        self.move(screen.left() + screen.width() - 380, max(screen.top(), screen.top() + screen.height() - 600))
 
         self.main_container = QWidget()
         # 使用主题管理器设置容器样式
@@ -826,10 +856,10 @@ class ClipboardWindow(QWidget):
         self.tray_icon.activated.connect(self.tray_icon_activated)
         self.tray_icon.show()
         # macOS 使用 Command 键
-        self.tray_icon.setToolTip('剪贴板助手\nCmd+Shift+C: 显示/隐藏\nCmd+Space: 批量粘贴\nCmd+Shift+Q: 退出')
+        self.tray_icon.setToolTip('剪贴板助手\nCmd+Shift+C: 显示/隐藏\nCmd+Option+V: 批量粘贴\nCmd+Shift+Q: 退出')
 
     def tray_icon_activated(self, reason):
-        if reason == QSystemTrayIcon.DoubleClick:
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self.do_toggle_window()
         elif reason == QSystemTrayIcon.Context:
             # 右键点击显示自定义菜单
@@ -857,21 +887,21 @@ class ClipboardWindow(QWidget):
             self.dragging = False
 
             # 检查是否触发边缘吸附
-            screen = QApplication.desktop().screenGeometry()
+            screen = available_screen_geometry(self.frameGeometry().center())
             window_rect = self.geometry()
 
             edge = None
             # 检测左边缘
-            if window_rect.left() <= self.edge_snap_distance:
+            if window_rect.left() <= screen.left() + self.edge_snap_distance:
                 edge = 'left'
             # 检测右边缘
-            elif window_rect.right() >= screen.width() - self.edge_snap_distance:
+            elif window_rect.right() >= screen.left() + screen.width() - self.edge_snap_distance:
                 edge = 'right'
             # 检测顶部边缘
-            elif window_rect.top() <= self.edge_snap_distance:
+            elif window_rect.top() <= screen.top() + self.edge_snap_distance:
                 edge = 'top'
             # 检测底部边缘
-            elif window_rect.bottom() >= screen.height() - self.edge_snap_distance:
+            elif window_rect.bottom() >= screen.top() + screen.height() - self.edge_snap_distance:
                 edge = 'bottom'
 
             # 如果检测到边缘,则进入胶囊模式
@@ -883,7 +913,7 @@ class ClipboardWindow(QWidget):
 
     def check_edge_snap(self):
         """检测是否接近屏幕边缘(拖动时视觉提示)"""
-        screen = QApplication.desktop().screenGeometry()
+        screen = available_screen_geometry(self.frameGeometry().center())
         window_rect = self.geometry()
 
         # 检测是否接近边缘,可以在这里添加视觉反馈(如高亮边缘)
@@ -1123,7 +1153,7 @@ class ClipboardWindow(QWidget):
         # 计算目标位置(根据吸附的边缘)
         from PyQt5.QtWidgets import QApplication
         from PyQt5.QtCore import QRect, QPropertyAnimation, QEasingCurve, QTimer
-        screen = QApplication.desktop().screenGeometry()
+        screen = available_screen_geometry(self.frameGeometry().center())
 
         # 获取当前窗口位置,用于确定胶囊吸附位置
         current_window_rect = self.geometry()
@@ -1134,12 +1164,12 @@ class ClipboardWindow(QWidget):
             self.floating_icon.set_orientation('vertical')
             capsule_width = self.floating_icon.capsule_width
             capsule_height = self.floating_icon.capsule_height
-            capsule_x = 0
+            capsule_x = screen.left()
             # 使用当前窗口的Y位置(取窗口中心点对应的胶囊中心位置)
             window_center_y = current_window_rect.y() + current_window_rect.height() // 2
             capsule_y = window_center_y - capsule_height // 2
             # 确保不超出屏幕范围
-            capsule_y = max(0, min(capsule_y, screen.height() - capsule_height))
+            capsule_y = max(screen.top(), min(capsule_y, screen.top() + screen.height() - capsule_height))
         elif self.docked_edge == 'top':
             # 顶部边缘: 横向胶囊,保持窗口当前的X位置
             self.floating_icon.set_orientation('horizontal')
@@ -1149,8 +1179,8 @@ class ClipboardWindow(QWidget):
             window_center_x = current_window_rect.x() + current_window_rect.width() // 2
             capsule_x = window_center_x - capsule_width // 2
             # 确保不超出屏幕范围
-            capsule_x = max(0, min(capsule_x, screen.width() - capsule_width))
-            capsule_y = 0
+            capsule_x = max(screen.left(), min(capsule_x, screen.left() + screen.width() - capsule_width))
+            capsule_y = screen.top()
         elif self.docked_edge == 'bottom':
             # 底部边缘: 横向胶囊,保持窗口当前的X位置
             self.floating_icon.set_orientation('horizontal')
@@ -1160,19 +1190,19 @@ class ClipboardWindow(QWidget):
             window_center_x = current_window_rect.x() + current_window_rect.width() // 2
             capsule_x = window_center_x - capsule_width // 2
             # 确保不超出屏幕范围
-            capsule_x = max(0, min(capsule_x, screen.width() - capsule_width))
-            capsule_y = screen.height() - capsule_height
+            capsule_x = max(screen.left(), min(capsule_x, screen.left() + screen.width() - capsule_width))
+            capsule_y = screen.top() + screen.height() - capsule_height
         else:  # right 或 默认
             # 右边缘: 竖向胶囊,保持窗口当前的Y位置
             self.floating_icon.set_orientation('vertical')
             capsule_width = self.floating_icon.capsule_width
             capsule_height = self.floating_icon.capsule_height
-            capsule_x = screen.width() - capsule_width
+            capsule_x = screen.left() + screen.width() - capsule_width
             # 使用当前窗口的Y位置(取窗口中心点对应的胶囊中心位置)
             window_center_y = current_window_rect.y() + current_window_rect.height() // 2
             capsule_y = window_center_y - capsule_height // 2
             # 确保不超出屏幕范围
-            capsule_y = max(0, min(capsule_y, screen.height() - capsule_height))
+            capsule_y = max(screen.top(), min(capsule_y, screen.top() + screen.height() - capsule_height))
 
         # 胶囊从主窗口的大小和位置开始(显示截图,不是胶囊形状)
         start_x = self.pos().x()
@@ -1233,11 +1263,11 @@ class ClipboardWindow(QWidget):
             from PyQt5.QtCore import QRect, QPropertyAnimation, QEasingCurve, QTimer
 
             # 确保窗口不超出屏幕边界
-            screen = QApplication.desktop().screenGeometry()
-            if self.saved_window_pos.x() < 0 or self.saved_window_pos.x() + self.width() > screen.width():
-                self.saved_window_pos.setX(max(0, min(self.saved_window_pos.x(), screen.width() - self.width())))
-            if self.saved_window_pos.y() < 0 or self.saved_window_pos.y() + self.height() > screen.height():
-                self.saved_window_pos.setY(max(0, min(self.saved_window_pos.y(), screen.height() - self.height())))
+            screen = available_screen_geometry(self.frameGeometry().center())
+            if self.saved_window_pos.x() < screen.left() or self.saved_window_pos.x() + self.width() > screen.left() + screen.width():
+                self.saved_window_pos.setX(max(screen.left(), min(self.saved_window_pos.x(), screen.left() + screen.width() - self.width())))
+            if self.saved_window_pos.y() < screen.top() or self.saved_window_pos.y() + self.height() > screen.top() + screen.height():
+                self.saved_window_pos.setY(max(screen.top(), min(self.saved_window_pos.y(), screen.top() + screen.height() - self.height())))
 
             # 创建放大飞入动画(从胶囊大小放大到主窗口大小并移动回原位置)
             fly_back_animation = QPropertyAnimation(self.floating_icon, b"geometry")
@@ -1406,30 +1436,43 @@ def check_single_instance():
 
 
 def main():
-    # 检查是否已有实例在运行
-    single_instance_ok, lock_file = check_single_instance()
-    if not single_instance_ok:
-        sys.exit(0)
+    if hasattr(Qt, 'AA_EnableHighDpiScaling'):
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName('剪贴板助手')
     app.setApplicationDisplayName('剪贴板助手')
 
+    single_instance_ok, lock_file = check_single_instance()
+    if not single_instance_ok:
+        sys.exit(0)
+
     window = ClipboardWindow()
+    window.clipboard_service.save_previous_window()
     window.show()
+
+    if not accessibility_is_trusted():
+        QMessageBox.information(
+            window,
+            '需要辅助功能权限',
+            '全局快捷键和批量粘贴需要辅助功能权限。\n\n'
+            '请打开 系统设置 > 隐私与安全性 > 辅助功能，'
+            '允许终端、Python 或本应用，然后重新打开剪贴板助手。'
+        )
 
     if hasattr(window, 'tray_icon') and window.tray_icon:
         window.tray_icon.showMessage(
             '剪贴板助手已启动',
-            'Cmd+Shift+C: 显示/隐藏\nCmd+Space: 批量粘贴\nCmd+Shift+Q: 退出',
+            'Cmd+Shift+C: 显示/隐藏\nCmd+Option+V: 批量粘贴\nCmd+Shift+Q: 退出',
             QSystemTrayIcon.Information,
             3000
         )
 
     exit_code = app.exec_()
 
-    # 释放锁文件
     if lock_file:
         lock_file.close()
 

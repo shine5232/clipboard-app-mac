@@ -72,12 +72,11 @@ class CapsuleWidget(QWidget):
 
     def position_at_screen_edge(self):
         """定位到屏幕右侧边缘"""
-        from PyQt5.QtWidgets import QApplication
-        screen = QApplication.desktop().screenGeometry()
+        from utils.screen_geometry import available_screen_geometry
+        screen = available_screen_geometry(self.frameGeometry().center())
 
-        # 垂直居中，靠右显示
-        x = screen.width() - self.width()
-        y = (screen.height() - self.height()) // 2
+        x = screen.left() + screen.width() - self.width()
+        y = screen.top() + (screen.height() - self.height()) // 2
         self.move(x, y)
 
     def expand(self):
@@ -87,19 +86,22 @@ class CapsuleWidget(QWidget):
 
         self.is_expanded = True
         self.is_animating = True
-        screen_width = self.screen().geometry().width()
+        screen = self.screen().availableGeometry() if self.screen() else None
+        if screen is None:
+            from utils.screen_geometry import available_screen_geometry
+            screen = available_screen_geometry(self.frameGeometry().center())
+        screen_right = screen.left() + screen.width()
         current_pos = self.pos()
 
-        # 从右侧边缘展开
         start_rect = QRect(
-            screen_width - self.collapsed_width,
+            screen_right - self.collapsed_width,
             current_pos.y(),
             self.collapsed_width,
             self.capsule_height
         )
 
         end_rect = QRect(
-            screen_width - self.expanded_width,
+            screen_right - self.expanded_width,
             current_pos.y(),
             self.expanded_width,
             self.capsule_height
@@ -116,10 +118,13 @@ class CapsuleWidget(QWidget):
 
         self.is_expanded = False
         self.is_animating = True
-        screen_width = self.screen().geometry().width()
+        screen = self.screen().availableGeometry() if self.screen() else None
+        if screen is None:
+            from utils.screen_geometry import available_screen_geometry
+            screen = available_screen_geometry(self.frameGeometry().center())
+        screen_right = screen.left() + screen.width()
         current_pos = self.pos()
 
-        # 收起到右侧边缘
         start_rect = QRect(
             current_pos.x(),
             current_pos.y(),
@@ -128,7 +133,7 @@ class CapsuleWidget(QWidget):
         )
 
         end_rect = QRect(
-            screen_width - self.collapsed_width,
+            screen_right - self.collapsed_width,
             current_pos.y(),
             self.collapsed_width,
             self.capsule_height

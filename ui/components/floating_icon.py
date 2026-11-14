@@ -122,11 +122,11 @@ class FloatingIcon(QWidget):
 
     def position_at_center(self):
         """定位到屏幕中央"""
-        from PyQt5.QtWidgets import QApplication
-        screen = QApplication.desktop().screenGeometry()
+        from utils.screen_geometry import available_screen_geometry
+        screen = available_screen_geometry(self.frameGeometry().center())
 
-        x = (screen.width() - self.width()) // 2
-        y = (screen.height() - self.height()) // 2
+        x = screen.left() + (screen.width() - self.width()) // 2
+        y = screen.top() + (screen.height() - self.height()) // 2
         self.move(x, y)
 
     def check_edge_position(self):
@@ -134,14 +134,10 @@ class FloatingIcon(QWidget):
         if self.is_animating:
             return
 
-        from PyQt5.QtWidgets import QApplication
-        screen = QApplication.desktop().screenGeometry()
+        from utils.screen_geometry import available_screen_geometry
+        screen = available_screen_geometry(self.frameGeometry().center())
 
-        current_x = self.x()
-        screen_width = screen.width()
-
-        # 检查是否靠近右侧边缘
-        distance_to_right = screen_width - (current_x + self.width())
+        distance_to_right = screen.right() - self.frameGeometry().right()
 
         if distance_to_right < self.edge_threshold:
             # 靠近右侧边缘，切换到胶囊模式
@@ -160,16 +156,14 @@ class FloatingIcon(QWidget):
         self.is_capsule_mode = True
         self.is_animating = True
 
-        from PyQt5.QtWidgets import QApplication
+        from utils.screen_geometry import available_screen_geometry
         from PyQt5.QtCore import QRect
-        screen = QApplication.desktop().screenGeometry()
+        screen = available_screen_geometry(self.frameGeometry().center())
 
-        # 当前位置
         current_rect = self.geometry()
 
-        # 目标位置：屏幕右侧边缘，垂直居中
-        target_x = screen.width() - self.capsule_width
-        target_y = (screen.height() - self.capsule_height) // 2
+        target_x = screen.left() + screen.width() - self.capsule_width
+        target_y = screen.top() + (screen.height() - self.capsule_height) // 2
         target_rect = QRect(target_x, target_y, self.capsule_width, self.capsule_height)
 
         # 执行变形动画
@@ -185,18 +179,16 @@ class FloatingIcon(QWidget):
         self.is_capsule_mode = False
         self.is_animating = True
 
-        from PyQt5.QtWidgets import QApplication
+        from utils.screen_geometry import available_screen_geometry
         from PyQt5.QtCore import QRect
 
-        screen = QApplication.desktop().screenGeometry()
+        screen = available_screen_geometry(self.frameGeometry().center())
 
-        # 当前位置
         current_rect = self.geometry()
 
-        # 目标位置：展开为圆形，向左移动一定距离，确保不在边缘阈值内
-        # 让圆形图标的右边缘距离屏幕右边缘 70px（略大于阈值60px，避免误触发）
-        target_x = screen.width() - self.icon_size - 70
+        target_x = screen.left() + screen.width() - self.icon_size - 70
         target_y = current_rect.y() + (self.capsule_height - self.icon_size) // 2
+        target_y = max(screen.top(), min(target_y, screen.top() + screen.height() - self.icon_size))
         target_rect = QRect(target_x, target_y, self.icon_size, self.icon_size)
 
         # 执行变形动画
