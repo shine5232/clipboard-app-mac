@@ -13,9 +13,10 @@ from pathlib import Path
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QListWidget, QLabel, QListWidgetItem,
                              QMessageBox, QMenu, QAction, QSystemTrayIcon,
-                             QDialog, QComboBox, QFormLayout, QFrame, QAbstractItemView)
+                             QDialog, QComboBox, QFormLayout, QFrame, QAbstractItemView,
+                             QShortcut)
 from PyQt5.QtCore import Qt, QPoint, pyqtSignal, QTimer, QRect
-from PyQt5.QtGui import QIcon, QFont, QBrush, QColor, QCursor
+from PyQt5.QtGui import QIcon, QFont, QBrush, QColor, QCursor, QKeySequence
 
 # 导入工具模块
 from utils.clipboard_utils import get_clipboard_text
@@ -34,8 +35,9 @@ from themes.theme_manager import ThemeManager, get_color_scheme_colors
 
 # 导入UI组件
 from ui.components.floating_icon import FloatingIcon
-from ui.components.tray_menu import TrayMenu
+from ui.components.tray_menu import TrayMenu, ClipboardItemMenu
 from ui.components.clipboard_delegate import ClipboardItemDelegate
+from ui.components.help_dialog import HelpDialog
 
 
 class SettingsDialog(QDialog):
@@ -414,6 +416,7 @@ class ClipboardWindow(QWidget):
         self.saved_window_pixmap = None  # 保存主窗口截图(用于飞入动画)
         self.edge_snap_distance = 50  # 触发吸附的距离阈值(像素)
         self.docked_edge = None  # 当前吸附的边缘: 'left', 'right', 'top', 'bottom'
+        self._paste_running = False
 
         # 初始化UI
         self.init_ui()
@@ -445,6 +448,9 @@ class ClipboardWindow(QWidget):
 
         # 更新模式标识
         self.update_mode_label()
+
+        # 初始化主窗口右键菜单
+        self.init_context_menu()
 
     def register_clipboard_listener(self):
         """注册剪贴板监听器"""
@@ -555,14 +561,19 @@ class ClipboardWindow(QWidget):
         except Exception:
             pass  # 快捷键注册失败
 
-    def do_paste(self):
+    def do_paste(self, steps=None):
         """把列表内容粘贴到之前的应用。顺序和倒序会在条目之间按回车。"""
-        steps = self.clipboard_service.build_paste_steps()
+        if self._paste_running:
+            return
+
+        if steps is None:
+            steps = self.clipboard_service.build_paste_steps()
         if not steps:
             return
 
         self._paste_steps = steps
         self._paste_index = 0
+        self._paste_running = True
         we_are_front = self.clipboard_service.capture_paste_target()
         if we_are_front:
             self.clipboard_service.restore_previous_window()
@@ -573,13 +584,18 @@ class ClipboardWindow(QWidget):
             delay = 40
         QTimer.singleShot(delay, self._paste_current_step)
 
+    def _finish_paste(self):
+        self._paste_running = False
+
     def _paste_current_step(self):
         """写入当前条目并排队发送按键。"""
         if self._paste_index >= len(getattr(self, "_paste_steps", [])):
+            self._finish_paste()
             return
 
         step = self._paste_steps[self._paste_index]
         if not self.clipboard_service.place_paste_text(step["text"]):
+            self._finish_paste()
             return
         QTimer.singleShot(60, lambda current=step: self._send_paste_keys(current))
 
@@ -593,6 +609,8 @@ class ClipboardWindow(QWidget):
         self._paste_index += 1
         if self._paste_index < len(self._paste_steps):
             QTimer.singleShot(80, self._paste_current_step)
+        else:
+            self._finish_paste()
 
     def _send_enter_and_continue(self):
         """发送回车后处理下一条。"""
@@ -651,6 +669,8 @@ class ClipboardWindow(QWidget):
         self.list_widget.setMouseTracking(True)
         self.list_widget.viewport().setMouseTracking(True)
         self.list_widget.viewport().installEventFilter(self)
+        self.list_widget.viewport().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list_widget.viewport().customContextMenuRequested.connect(self.on_list_context_menu)
 
         # 设置统一项目高度以优化性能
         self.list_widget.setUniformItemSizes(True)
@@ -663,6 +683,8 @@ class ClipboardWindow(QWidget):
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.addWidget(self.main_container)
         self.setLayout(outer_layout)
+        self.setContextMenuPolicy(Qt.DefaultContextMenu)
+        QShortcut(QKeySequence("F1"), self, self.show_help)
 
     def create_header(self):
         """创建头部"""
@@ -727,6 +749,26 @@ class ClipboardWindow(QWidget):
         self.mode_label.setStyleSheet(self.theme_manager.get_header_mode_label_style())
         self.mode_label.setToolTip('当前输出模式')
         layout.addWidget(self.mode_label)
+
+        from PyQt5.QtGui import QPixmap, QPen
+
+        help_btn = QPushButton()
+        help_btn.setFixedSize(20, 20)
+        help_btn.setToolTip('操作说明 (F1)')
+        help_pixmap = QPixmap(20, 20)
+        help_pixmap.fill(Qt.transparent)
+        help_painter = QPainter(help_pixmap)
+        help_painter.setRenderHint(QPainter.Antialiasing)
+        help_painter.setPen(QPen(Qt.white, 1.5))
+        help_painter.setBrush(Qt.NoBrush)
+        help_painter.drawEllipse(3, 3, 14, 14)
+        help_painter.setFont(QFont('Arial', 9, QFont.Bold))
+        help_painter.drawText(QRect(3, 2, 14, 14), Qt.AlignCenter, '?')
+        help_painter.end()
+        help_btn.setIcon(QIcon(help_pixmap))
+        help_btn.setStyleSheet(self.theme_manager.get_header_icon_button_style())
+        help_btn.clicked.connect(self.show_help)
+        layout.addWidget(help_btn)
 
         clear_btn = QPushButton()
         clear_btn.setFixedSize(20, 20)
@@ -844,8 +886,7 @@ class ClipboardWindow(QWidget):
 
         # 创建自定义托盘菜单
         self.tray_menu = TrayMenu()
-        self.tray_menu.show_window_clicked.connect(self.show_window)
-        self.tray_menu.quit_clicked.connect(self.do_quit_app)
+        self._connect_window_menu(self.tray_menu)
 
         # 设置主题
         is_dark = self.settings.get('theme') == 'dark'
@@ -856,7 +897,89 @@ class ClipboardWindow(QWidget):
         self.tray_icon.activated.connect(self.tray_icon_activated)
         self.tray_icon.show()
         # macOS 使用 Command 键
-        self.tray_icon.setToolTip('剪贴板助手\nCmd+Shift+C: 显示/隐藏\nCmd+Option+V: 批量粘贴\nCmd+Shift+Q: 退出')
+        self.tray_icon.setToolTip('剪贴板助手\nCmd+Shift+C: 显示/隐藏\nCmd+Option+V: 批量粘贴\nCmd+Shift+Q: 退出\n右键或 F1: 操作说明')
+
+    def _connect_window_menu(self, menu):
+        menu.show_window_clicked.connect(self.show_window)
+        menu.help_clicked.connect(self.show_help)
+        menu.settings_clicked.connect(self.show_settings)
+        menu.clear_clicked.connect(self.clear_clipboard)
+        menu.quit_clicked.connect(self.do_quit_app)
+
+    def init_context_menu(self):
+        """初始化主窗口右键菜单和记录右键菜单。"""
+        is_dark = self.settings.get('theme') == 'dark'
+        color_scheme = self.settings.get('color_scheme', 'pure_blue')
+
+        self.context_menu = TrayMenu()
+        self._connect_window_menu(self.context_menu)
+        self.context_menu.set_theme(is_dark, color_scheme)
+
+        self.item_menu = ClipboardItemMenu()
+        self.item_menu.copy_clicked.connect(self.copy_item_text)
+        self.item_menu.paste_clicked.connect(self.paste_item_text)
+        self.item_menu.delete_clicked.connect(self.remove_item_by_text)
+        self.item_menu.set_theme(is_dark, color_scheme)
+
+    def contextMenuEvent(self, event):
+        """主窗口右键菜单。列表区域交给记录菜单处理。"""
+        if hasattr(self, "list_widget"):
+            viewport = self.list_widget.viewport()
+            local_pos = viewport.mapFromGlobal(event.globalPos())
+            if viewport.rect().contains(local_pos):
+                event.accept()
+                return
+        self.show_window_menu(event.globalPos())
+        event.accept()
+
+    def show_window_menu(self, global_pos):
+        if hasattr(self, 'item_menu'):
+            self.item_menu.hide()
+        self.context_menu.show_at(global_pos)
+
+    def on_list_context_menu(self, pos):
+        """列表记录或空白处的右键菜单。"""
+        global_pos = self.list_widget.viewport().mapToGlobal(pos)
+        text = ''
+        index = self.list_widget.indexAt(pos)
+        if index.isValid():
+            data = index.data(Qt.UserRole)
+            if isinstance(data, dict):
+                text = data.get('text', '')
+        if text:
+            self.context_menu.hide()
+            self.item_menu.show_for_item(text, global_pos)
+            return
+        self.show_window_menu(global_pos)
+
+    def show_help(self):
+        """显示操作说明。窗口隐藏时独立弹出，避免被工具窗口挡住。"""
+        parent = self if self.isVisible() and not self.is_capsule_mode else None
+        dialog = HelpDialog(
+            parent,
+            theme=self.settings.get('theme', 'light'),
+            color_scheme=self.settings.get('color_scheme', 'pure_blue'),
+        )
+        dialog.exec_()
+
+    def copy_item_text(self, text):
+        """把单条记录写入系统剪贴板，不重复收录。"""
+        if not text:
+            return
+        if self.clipboard_service.place_paste_text(text):
+            self.show_notification('已复制到系统剪贴板')
+        else:
+            self.show_notification('复制失败，请重试')
+
+    def paste_item_text(self, text):
+        """把单条记录粘贴到之前的应用。"""
+        if not text:
+            return
+        self.clipboard_service.paste_ignore_until = max(
+            self.clipboard_service.paste_ignore_until,
+            time.time() + 1.5,
+        )
+        self.do_paste([{'text': text, 'press_enter_after': False}])
 
     def tray_icon_activated(self, reason):
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
@@ -866,6 +989,10 @@ class ClipboardWindow(QWidget):
             self.tray_menu.show_at_cursor()
 
     def header_mouse_press(self, event):
+        if event.button() == Qt.RightButton:
+            self.show_window_menu(event.globalPos())
+            event.accept()
+            return
         if event.button() == Qt.LeftButton:
             self.dragging = True
             self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
@@ -1049,16 +1176,20 @@ class ClipboardWindow(QWidget):
     def clear_clipboard(self):
         """清空剪贴板"""
         if self.clipboard_service.get_data_count() == 0:
+            self.show_notification('当前没有记录')
             return
 
-        reply = QMessageBox.question(
-            self, '确认', '确定要清空所有剪贴板数据吗?',
-            QMessageBox.Yes | QMessageBox.No
-        )
-
-        if reply == QMessageBox.Yes:
+        parent = self if self.isVisible() else None
+        box = QMessageBox(parent)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle('确认')
+        box.setText('确定要清空所有剪贴板数据吗?')
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        if box.exec_() == QMessageBox.Yes:
             self.clipboard_service.clear_all()
             self.save_data()
+            self.show_notification('已清空记录')
 
     def hide_window(self):
         self.hide()
@@ -1100,7 +1231,12 @@ class ClipboardWindow(QWidget):
 
     def show_settings(self):
         """显示设置对话框"""
+        if self.is_capsule_mode:
+            self.restore_from_capsule()
+        elif not self.isVisible():
+            self.show_window()
         dialog = SettingsDialog(self, self.settings.copy())
+        dialog.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         dialog.exec_()
 
     def init_capsule_widget(self):
@@ -1362,6 +1498,12 @@ class ClipboardWindow(QWidget):
         if hasattr(self, 'tray_menu'):
             self.tray_menu.set_theme(is_dark, color_scheme)
 
+        # 更新右键菜单主题
+        if hasattr(self, 'context_menu'):
+            self.context_menu.set_theme(is_dark, color_scheme)
+        if hasattr(self, 'item_menu'):
+            self.item_menu.set_theme(is_dark, color_scheme)
+
     def update_theme_style(self, is_dark=False, color_scheme='pure_blue'):
         """更新主题样式"""
         # 更新主题管理器
@@ -1466,7 +1608,7 @@ def main():
     if hasattr(window, 'tray_icon') and window.tray_icon:
         window.tray_icon.showMessage(
             '剪贴板助手已启动',
-            'Cmd+Shift+C: 显示/隐藏\nCmd+Option+V: 批量粘贴\nCmd+Shift+Q: 退出',
+            'Cmd+Shift+C: 显示/隐藏\nCmd+Option+V: 批量粘贴\nCmd+Shift+Q: 退出\n右键或 F1: 操作说明',
             QSystemTrayIcon.Information,
             3000
         )

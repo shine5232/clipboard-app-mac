@@ -66,6 +66,7 @@ python main.py
 
 ## 下一步
 
+- 阅读 [操作说明.md](操作说明.md),或在程序里按 `F1` 查看
 - 阅读完整的 [README.md](README.md) 了解所有功能
 - 查看 [BUILD_GUIDE.md](BUILD_GUIDE.md) 学习如何打包应用
 - 根据需要自定义快捷键和主题

@@ -1,15 +1,36 @@
 """
-自定义托盘菜单组件
-美观的右键菜单，带图标和悬停效果
+自定义弹出菜单
+用于菜单栏图标、主窗口和剪贴板记录的右键菜单。
 """
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGraphicsDropShadowEffect
-from PyQt5.QtCore import Qt, pyqtSignal, QPoint
-from PyQt5.QtGui import QColor, QPainter, QPainterPath, QFont, QPen, QPixmap, QIcon
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGraphicsDropShadowEffect, QSizePolicy
+from PyQt5.QtCore import Qt, pyqtSignal, QRect
+from PyQt5.QtGui import QColor, QPainter, QFont, QPen, QPixmap
+
+
+class MenuSeparator(QWidget):
+    """菜单分隔线"""
+
+    def __init__(self, is_dark=False, parent=None):
+        super().__init__(parent)
+        self.is_dark = is_dark
+        self.setFixedHeight(9)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def set_dark_mode(self, is_dark):
+        self.is_dark = is_dark
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        color = QColor(255, 255, 255, 36) if self.is_dark else QColor(0, 0, 0, 28)
+        painter.setPen(QPen(color, 1))
+        y = self.height() // 2
+        painter.drawLine(10, y, self.width() - 10, y)
 
 
 class TrayMenuItem(QWidget):
-    """托盘菜单项"""
+    """弹出菜单项"""
 
     clicked = pyqtSignal()
 
@@ -17,15 +38,13 @@ class TrayMenuItem(QWidget):
         super().__init__(parent)
         self.icon_type = icon_type
         self.text = text
-        self.color = color  # 配色方案颜色
+        self.color = color
         self.is_danger = is_danger
         self.is_hovered = False
         self.is_dark = is_dark
-
         self.init_ui()
 
     def init_ui(self):
-        """初始化UI"""
         self.setFixedHeight(32)
         self.setCursor(Qt.PointingHandCursor)
         self.setMouseTracking(True)
@@ -34,88 +53,94 @@ class TrayMenuItem(QWidget):
         layout.setContentsMargins(10, 4, 10, 4)
         layout.setSpacing(8)
 
-        # 图标
         self.icon_label = QLabel()
         self.icon_label.setFixedSize(16, 16)
         self.update_icon()
         layout.addWidget(self.icon_label)
 
-        # 文本
         self.text_label = QLabel(self.text)
-        self.text_label.setFont(QFont('Microsoft YaHei', 9))
+        font = QFont("PingFang SC", 9)
+        font.setStyleHint(QFont.SansSerif)
+        self.text_label.setFont(font)
         layout.addWidget(self.text_label)
-
         layout.addStretch()
         self.setLayout(layout)
-
         self.update_style()
 
     def update_icon(self):
-        """更新图标"""
         pixmap = QPixmap(16, 16)
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # 根据状态选择颜色
-        if self.is_danger:
-            color = QColor("#e74c3c")
-        else:
-            # 使用配色方案颜色
-            color = QColor(self.color)
-
-        pen = QPen(color, 1.5)
-        painter.setPen(pen)
+        color = QColor("#e74c3c") if self.is_danger else QColor(self.color)
+        painter.setPen(QPen(color, 1.5))
         painter.setBrush(Qt.NoBrush)
 
         if self.icon_type == "window":
-            # 窗口图标
             painter.drawRoundedRect(2, 3, 12, 10, 2, 2)
             painter.drawLine(2, 6, 14, 6)
             painter.setBrush(color)
             painter.drawEllipse(4, 4, 2, 2)
             painter.drawEllipse(7, 4, 2, 2)
-
         elif self.icon_type == "exit":
-            # 退出图标
-            painter.drawRect(5, 2, 8, 12)
-            painter.drawLine(5, 2, 5, 14)
-            painter.drawLine(5, 2, 13, 2)
-            painter.drawLine(5, 14, 13, 14)
-            # 箭头
-            painter.drawLine(1, 8, 8, 8)
-            painter.drawLine(1, 8, 4, 5)
-            painter.drawLine(1, 8, 4, 11)
-
+            painter.drawLine(4, 3, 12, 3)
+            painter.drawLine(5, 3, 5, 13)
+            painter.drawLine(11, 3, 11, 13)
+            painter.drawLine(5, 13, 11, 13)
+            painter.drawLine(2, 8, 8, 8)
+            painter.drawLine(2, 8, 5, 5)
+            painter.drawLine(2, 8, 5, 11)
         elif self.icon_type == "settings":
-            # 设置图标（齿轮）
             import math
-            center_x, center_y = 8, 8
             painter.drawEllipse(5, 5, 6, 6)
             for i in range(8):
                 angle = i * math.pi / 4
-                x1 = center_x + 3 * math.cos(angle)
-                y1 = center_y + 3 * math.sin(angle)
-                x2 = center_x + 6 * math.cos(angle)
-                y2 = center_y + 6 * math.sin(angle)
-                painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+                painter.drawLine(
+                    int(8 + 3 * math.cos(angle)),
+                    int(8 + 3 * math.sin(angle)),
+                    int(8 + 6 * math.cos(angle)),
+                    int(8 + 6 * math.sin(angle)),
+                )
+        elif self.icon_type == "help":
+            painter.drawEllipse(2, 2, 12, 12)
+            font = QFont("Arial", 8, QFont.Bold)
+            painter.setFont(font)
+            painter.drawText(QRect(2, 1, 12, 13), Qt.AlignCenter, "?")
+        elif self.icon_type == "clear":
+            painter.drawLine(3, 4, 13, 4)
+            painter.drawLine(6, 2, 10, 2)
+            painter.drawLine(6, 2, 6, 4)
+            painter.drawLine(10, 2, 10, 4)
+            painter.drawRoundedRect(4, 5, 8, 8, 1, 1)
+            painter.drawLine(7, 7, 7, 11)
+            painter.drawLine(9, 7, 9, 11)
+        elif self.icon_type == "copy":
+            painter.drawRoundedRect(5, 2, 8, 9, 1, 1)
+            painter.drawRoundedRect(2, 5, 8, 9, 1, 1)
+        elif self.icon_type == "paste":
+            painter.drawRoundedRect(3, 4, 10, 10, 1, 1)
+            painter.drawLine(6, 2, 10, 2)
+            painter.drawLine(6, 2, 6, 5)
+            painter.drawLine(10, 2, 10, 5)
+        elif self.icon_type == "delete":
+            painter.drawLine(4, 4, 12, 12)
+            painter.drawLine(12, 4, 4, 12)
 
         painter.end()
         self.icon_label.setPixmap(pixmap)
 
     def update_style(self):
-        """更新样式"""
         if self.is_hovered:
-            bg_color = "rgba(231, 76, 60, 0.1)" if self.is_danger else "rgba(102, 126, 234, 0.1)"
+            if self.is_danger:
+                bg_color = "rgba(231, 76, 60, 0.12)"
+            else:
+                tone = QColor(self.color)
+                bg_color = f"rgba({tone.red()}, {tone.green()}, {tone.blue()}, 0.12)"
         else:
             bg_color = "transparent"
 
-        # 文本颜色：危险项用红色，普通项使用配色方案颜色
-        if self.is_danger:
-            text_color = "#e74c3c"
-        else:
-            text_color = self.color
-
+        text_color = "#e74c3c" if self.is_danger else self.color
         self.setStyleSheet(f"""
             TrayMenuItem {{
                 background: {bg_color};
@@ -125,105 +150,90 @@ class TrayMenuItem(QWidget):
         self.text_label.setStyleSheet(f"color: {text_color}; background: transparent;")
 
     def set_dark_mode(self, is_dark):
-        """设置暗夜模式"""
         self.is_dark = is_dark
         self.update_style()
         self.update_icon()
 
     def set_color(self, color):
-        """设置配色方案颜色"""
         self.color = color
         self.update_style()
         self.update_icon()
 
     def enterEvent(self, event):
-        """鼠标进入"""
         self.is_hovered = True
         self.update_style()
-        self.update_icon()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        """鼠标离开"""
         self.is_hovered = False
         self.update_style()
-        self.update_icon()
         super().leaveEvent(event)
 
     def mousePressEvent(self, event):
-        """鼠标点击"""
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
 
 
-class TrayMenu(QWidget):
-    """自定义托盘菜单"""
-
-    # 信号
-    show_window_clicked = pyqtSignal()
-    quit_clicked = pyqtSignal()
+class BasePopupMenu(QWidget):
+    """无边框弹出菜单"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.is_dark = False
-        self.color_scheme = 'pure_blue'
-        self.init_ui()
+        self.color_scheme = "pure_blue"
+        self._items = []
+        self._separators = []
+        self._init_chrome()
 
-    def init_ui(self):
-        """初始化UI"""
+    def _init_chrome(self):
         self.setWindowFlags(
             Qt.Popup |
             Qt.FramelessWindowHint |
             Qt.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setFixedWidth(150)  # 设置弹窗固定宽度
+        self.setFixedWidth(184)
 
-        # 主容器
         self.container = QWidget()
         self.container.setObjectName("trayMenuContainer")
 
-        # 添加阴影
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(20)
         shadow.setOffset(0, 4)
         shadow.setColor(QColor(0, 0, 0, 50))
         self.container.setGraphicsEffect(shadow)
 
-        # 获取配色方案颜色
-        from themes.theme_manager import get_color_scheme_colors
-        color1, _ = get_color_scheme_colors(self.color_scheme, self.is_dark)
+        self.menu_layout = QVBoxLayout()
+        self.menu_layout.setContentsMargins(6, 6, 6, 6)
+        self.menu_layout.setSpacing(2)
+        self.container.setLayout(self.menu_layout)
 
-        # 容器布局
-        container_layout = QVBoxLayout()
-        container_layout.setContentsMargins(6, 6, 6, 6)
-        container_layout.setSpacing(2)
-
-        # 菜单项
-        self.show_item = TrayMenuItem("window", "打开主界面", color1, is_dark=self.is_dark)
-        self.show_item.clicked.connect(self.on_show_clicked)
-        container_layout.addWidget(self.show_item)
-
-        self.quit_item = TrayMenuItem("exit", "退出程序", "#e74c3c", is_danger=True, is_dark=self.is_dark)
-        self.quit_item.clicked.connect(self.on_quit_clicked)
-        container_layout.addWidget(self.quit_item)
-
-        self.container.setLayout(container_layout)
-
-        # 外层布局
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.addWidget(self.container)
         self.setLayout(main_layout)
-
         self.update_style()
 
+    def add_action(self, icon_type, text, callback, is_danger=False):
+        from themes.theme_manager import get_color_scheme_colors
+
+        color1, _ = get_color_scheme_colors(self.color_scheme, self.is_dark)
+        item = TrayMenuItem(icon_type, text, color1, is_danger, self.is_dark)
+        item.clicked.connect(callback)
+        self.menu_layout.addWidget(item)
+        self._items.append(item)
+        return item
+
+    def add_separator(self):
+        separator = MenuSeparator(self.is_dark)
+        self.menu_layout.addWidget(separator)
+        self._separators.append(separator)
+        return separator
+
     def update_style(self):
-        """更新样式"""
         bg_color = "#2d2d2d" if self.is_dark else "#ffffff"
         border_color = "rgba(255,255,255,0.1)" if self.is_dark else "rgba(0,0,0,0.08)"
-
         self.container.setStyleSheet(f"""
             #trayMenuContainer {{
                 background: {bg_color};
@@ -232,61 +242,118 @@ class TrayMenu(QWidget):
             }}
         """)
 
-        # 获取配色方案颜色并更新菜单项
         from themes.theme_manager import get_color_scheme_colors
         color1, _ = get_color_scheme_colors(self.color_scheme, self.is_dark)
-
-        # 更新菜单项的暗夜模式和颜色
-        if hasattr(self, 'show_item'):
-            self.show_item.set_dark_mode(self.is_dark)
-            self.show_item.set_color(color1)
-        if hasattr(self, 'quit_item'):
-            self.quit_item.set_dark_mode(self.is_dark)
+        for item in self._items:
+            item.set_dark_mode(self.is_dark)
+            if not item.is_danger:
+                item.set_color(color1)
+        for separator in self._separators:
+            separator.set_dark_mode(self.is_dark)
 
     def set_theme(self, is_dark, color_scheme):
-        """设置主题"""
         self.is_dark = is_dark
         self.color_scheme = color_scheme
         self.update_style()
 
-    def on_show_clicked(self):
-        """点击显示窗口"""
-        self.hide()
-        self.show_window_clicked.emit()
-
-    def on_quit_clicked(self):
-        """点击退出"""
-        self.hide()
-        self.quit_clicked.emit()
-
-    def show_at_cursor(self):
-        """在鼠标位置显示菜单"""
-        from PyQt5.QtGui import QCursor
-        from PyQt5.QtWidgets import QApplication
-
-        # 调整大小
-        self.adjustSize()
-
-        # 获取鼠标位置和屏幕信息
+    def show_at(self, global_pos):
         from utils.screen_geometry import available_screen_geometry
-        cursor_pos = QCursor.pos()
-        screen = available_screen_geometry(cursor_pos)
 
+        self.adjustSize()
+        screen = available_screen_geometry(global_pos)
         menu_width = self.width()
         menu_height = self.height()
 
-        x = cursor_pos.x()
-        y = cursor_pos.y() - menu_height
-
+        x = global_pos.x()
+        y = global_pos.y() - menu_height
         if x + menu_width > screen.left() + screen.width():
             x = screen.left() + screen.width() - menu_width
         if x < screen.left():
             x = screen.left()
         if y < screen.top():
-            y = cursor_pos.y()
+            y = global_pos.y()
         if y + menu_height > screen.top() + screen.height():
             y = screen.top() + screen.height() - menu_height
 
         self.move(x, y)
         self.show()
+        self.raise_()
         self.activateWindow()
+
+    def show_at_cursor(self):
+        from PyQt5.QtGui import QCursor
+        self.show_at(QCursor.pos())
+
+
+class TrayMenu(BasePopupMenu):
+    """主窗口和菜单栏图标右键菜单"""
+
+    show_window_clicked = pyqtSignal()
+    help_clicked = pyqtSignal()
+    settings_clicked = pyqtSignal()
+    clear_clicked = pyqtSignal()
+    quit_clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.add_action("window", "打开主界面", self.on_show_clicked)
+        self.add_action("help", "操作说明", self.on_help_clicked)
+        self.add_action("settings", "设置", self.on_settings_clicked)
+        self.add_action("clear", "清空记录", self.on_clear_clicked)
+        self.add_separator()
+        self.add_action("exit", "退出程序", self.on_quit_clicked, is_danger=True)
+
+    def on_show_clicked(self):
+        self.hide()
+        self.show_window_clicked.emit()
+
+    def on_help_clicked(self):
+        self.hide()
+        self.help_clicked.emit()
+
+    def on_settings_clicked(self):
+        self.hide()
+        self.settings_clicked.emit()
+
+    def on_clear_clicked(self):
+        self.hide()
+        self.clear_clicked.emit()
+
+    def on_quit_clicked(self):
+        self.hide()
+        self.quit_clicked.emit()
+
+
+class ClipboardItemMenu(BasePopupMenu):
+    """单条剪贴板记录的右键菜单"""
+
+    copy_clicked = pyqtSignal(str)
+    paste_clicked = pyqtSignal(str)
+    delete_clicked = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.item_text = ""
+        self.add_action("copy", "复制此项", self.on_copy_clicked)
+        self.add_action("paste", "粘贴此项", self.on_paste_clicked)
+        self.add_separator()
+        self.add_action("delete", "删除此项", self.on_delete_clicked, is_danger=True)
+
+    def show_for_item(self, text, global_pos):
+        self.item_text = text or ""
+        self.show_at(global_pos)
+
+    def on_copy_clicked(self):
+        text = self.item_text
+        self.hide()
+        self.copy_clicked.emit(text)
+
+    def on_paste_clicked(self):
+        text = self.item_text
+        self.hide()
+        self.paste_clicked.emit(text)
+
+    def on_delete_clicked(self):
+        text = self.item_text
+        self.hide()
+        self.delete_clicked.emit(text)
