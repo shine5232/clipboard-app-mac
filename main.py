@@ -537,29 +537,33 @@ class ClipboardWindow(QWidget):
             pass  # 处理剪贴板变化失败
 
     def register_hotkeys(self):
-        """注册全局快捷键 - macOS 版本"""
+        """注册全局快捷键。按虚拟键码匹配，避免 Option+V 变成 √ 后匹配失败。"""
+        self._hotkeys_ready = False
         try:
-            from pynput.keyboard import GlobalHotKeys, Key
+            from utils.hotkey_listener import MacHotkeyListener
 
-            def on_paste_hotkey():
-                # 使用信号确保在主线程执行
-                self.do_paste_signal.emit()
+            self.hotkey_listener = MacHotkeyListener(
+                on_paste=lambda: self.do_paste_signal.emit(),
+                on_toggle=lambda: self.toggle_window_signal.emit(),
+                on_quit=lambda: self.quit_app_signal.emit(),
+            )
+            self._hotkeys_ready = self.hotkey_listener.start()
+            if not self._hotkeys_ready:
+                QTimer.singleShot(1200, self._notify_hotkey_failure)
+        except Exception as exc:
+            self._hotkey_error = str(exc)
+            QTimer.singleShot(1200, self._notify_hotkey_failure)
 
-            def on_toggle_hotkey():
-                self.toggle_window_signal.emit()
-
-            def on_quit_hotkey():
-                self.quit_app_signal.emit()
-
-            # macOS 使用 Command 键替代 Ctrl
-            self.hotkey_listener = GlobalHotKeys({
-                '<cmd>+<alt>+v': on_paste_hotkey,  # Command+Option+V
-                '<cmd>+<shift>+c': on_toggle_hotkey,  # Command+Shift+C
-                '<cmd>+<shift>+q': on_quit_hotkey  # Command+Shift+Q
-            })
-            self.hotkey_listener.start()
-        except Exception:
-            pass  # 快捷键注册失败
+    def _notify_hotkey_failure(self):
+        detail = ""
+        listener = getattr(self, "hotkey_listener", None)
+        if listener is not None:
+            detail = getattr(listener, "error", "") or ""
+        detail = detail or getattr(self, "_hotkey_error", "")
+        message = "Cmd+Option+V 未生效。请在辅助功能中勾选“剪贴板助手”后重新打开。"
+        if detail:
+            message = message + " " + detail
+        self.show_notification(message)
 
     def do_paste(self, steps=None):
         """把列表内容粘贴到之前的应用。顺序和倒序会在条目之间按回车。"""
@@ -569,6 +573,7 @@ class ClipboardWindow(QWidget):
         if steps is None:
             steps = self.clipboard_service.build_paste_steps()
         if not steps:
+            self.show_notification("没有可粘贴的记录")
             return
 
         self._paste_steps = steps
@@ -579,9 +584,9 @@ class ClipboardWindow(QWidget):
             self.clipboard_service.restore_previous_window()
             if self.isVisible():
                 self.hide()
-            delay = 220
+            delay = 260
         else:
-            delay = 40
+            delay = 90
         QTimer.singleShot(delay, self._paste_current_step)
 
     def _finish_paste(self):
@@ -1592,17 +1597,20 @@ def main():
     if not single_instance_ok:
         sys.exit(0)
 
+    accessibility_is_trusted(prompt=True)
+
     window = ClipboardWindow()
     window.clipboard_service.save_previous_window()
     window.show()
 
-    if not accessibility_is_trusted():
+    if not getattr(window, "_hotkeys_ready", False):
         QMessageBox.information(
             window,
-            '需要辅助功能权限',
-            '全局快捷键和批量粘贴需要辅助功能权限。\n\n'
-            '请打开 系统设置 > 隐私与安全性 > 辅助功能，'
-            '允许终端、Python 或本应用，然后重新打开剪贴板助手。'
+            "需要辅助功能权限",
+            "批量粘贴 Cmd+Option+V 需要辅助功能权限。\n\n"
+            "请打开 系统设置 > 隐私与安全性 > 辅助功能，"
+            "勾选“剪贴板助手”本身，不要只勾选终端或 Python。"
+            "如果列表里是旧的同名应用，先移除再重新勾选，然后重新打开。",
         )
 
     if hasattr(window, 'tray_icon') and window.tray_icon:

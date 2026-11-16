@@ -24,16 +24,26 @@ echo "开始打包..."
 pyinstaller --name="剪贴板助手" \
     --windowed \
     --osx-bundle-identifier=com.clipboardhelper.app \
+    --collect-all PyQt5 \
+    --collect-all pynput \
+    --collect-submodules pynput \
+    --collect-all Quartz \
+    --collect-all AppKit \
+    --collect-all Foundation \
+    --collect-all CoreFoundation \
+    --collect-all objc \
     --hidden-import=PyQt5 \
-    --hidden-import=PyQt5.QtCore \
-    --hidden-import=PyQt5.QtGui \
-    --hidden-import=PyQt5.QtWidgets \
-    --hidden-import=pynput \
-    --hidden-import=pynput.keyboard \
+    --hidden-import=pynput.keyboard._darwin \
+    --hidden-import=pynput._util.darwin \
     --hidden-import=pyperclip \
     --hidden-import=AppKit \
     --hidden-import=Quartz \
-    --collect-all PyQt5 \
+    --hidden-import=Quartz.CoreGraphics \
+    --hidden-import=HIServices \
+    --hidden-import=ApplicationServices \
+    --hidden-import=CoreFoundation \
+    --hidden-import=Foundation \
+    --hidden-import=objc \
     main.py
 
 # 检查打包是否成功

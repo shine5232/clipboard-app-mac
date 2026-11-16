@@ -3,4 +3,6 @@ pynput>=1.7.6
 pyperclip>=1.8.2
 pyobjc-framework-Cocoa>=9.0
 pyobjc-framework-Quartz>=9.0
+pyobjc-framework-ApplicationServices>=9.0
+pyobjc-framework-CoreFoundation>=9.0
 PyInstaller>=6.0.0
