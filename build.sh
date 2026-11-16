@@ -30,7 +30,6 @@ pyinstaller --name="剪贴板助手" \
     --collect-all Quartz \
     --collect-all AppKit \
     --collect-all Foundation \
-    --collect-all CoreFoundation \
     --collect-all objc \
     --hidden-import=PyQt5 \
     --hidden-import=pynput.keyboard._darwin \
@@ -41,7 +40,6 @@ pyinstaller --name="剪贴板助手" \
     --hidden-import=Quartz.CoreGraphics \
     --hidden-import=HIServices \
     --hidden-import=ApplicationServices \
-    --hidden-import=CoreFoundation \
     --hidden-import=Foundation \
     --hidden-import=objc \
     main.py
