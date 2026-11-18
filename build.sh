@@ -79,6 +79,11 @@ if [ -d "dist/剪贴板助手.app" ]; then
     echo "1. 直接运行: open dist/剪贴板助手.app"
     echo "2. 移动到应用程序文件夹: cp -r dist/剪贴板助手.app /Applications/"
     echo ""
+
+    # 顺手生成可发给别人的分发包，避免手打之后发出旧的 zip
+    if [ -f "packaging/make_zip.sh" ]; then
+        bash packaging/make_zip.sh || echo "⚠️ 分发包生成失败（app 本身是好的，可单独重跑 packaging/make_zip.sh）"
+    fi
 else
     echo ""
     echo "❌ 打包失败: 没有生成 dist/剪贴板助手.app"
