@@ -22,6 +22,7 @@ from PyQt5.QtGui import QIcon, QFont, QBrush, QColor, QCursor, QKeySequence
 from utils.clipboard_utils import get_clipboard_text
 from utils.screen_geometry import available_screen_geometry
 from utils.permissions import accessibility_is_trusted
+from utils.keyboard_simulator import can_send_keys
 from utils.clipboard_listener import ClipboardListener
 
 # 导入业务逻辑层
@@ -59,7 +60,7 @@ class SettingsDialog(QDialog):
     def init_ui(self):
         """初始化设置界面"""
         self.setWindowTitle('设置')
-        self.setFixedSize(380, 300)
+        self.setFixedSize(380, 374)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
 
@@ -94,12 +95,24 @@ class SettingsDialog(QDialog):
         # 输出模式配置
         output_group = self.create_setting_row(
             '输出模式',
-            '选择粘贴时的输出方式',
+            '逗号=一行；顺序/倒序=逐条+回车',
             ['逗号拼接', '顺序输出', '倒序输出'],
             {'comma': 0, 'sequential': 1, 'reverse': 2}.get(self.settings.get('output_mode'), 0),
             'output_mode'
         )
         content_layout.addWidget(output_group)
+
+        # 批量粘贴快捷键
+        hotkey_group = self.create_setting_row(
+            '粘贴快捷键',
+            '批量粘贴使用的全局组合键',
+            ['⌃⌘V（推荐）', '⇧⌘V', '⌥⌘V（易与其他应用冲突）'],
+            {'ctrl_cmd_v': 0, 'cmd_shift_v': 1, 'cmd_alt_v': 2}.get(
+                self.settings.get('paste_hotkey', 'ctrl_cmd_v'), 0
+            ),
+            'paste_hotkey'
+        )
+        content_layout.addWidget(hotkey_group)
 
         # 系统主题配置
         theme_group = self.create_setting_row(
@@ -303,6 +316,9 @@ class SettingsDialog(QDialog):
         if key == 'output_mode':
             mode_map = {0: 'comma', 1: 'sequential', 2: 'reverse'}
             self.temp_settings['output_mode'] = mode_map.get(index, 'comma')
+        elif key == 'paste_hotkey':
+            hotkey_map = {0: 'ctrl_cmd_v', 1: 'cmd_shift_v', 2: 'cmd_alt_v'}
+            self.temp_settings['paste_hotkey'] = hotkey_map.get(index, 'ctrl_cmd_v')
         elif key == 'theme':
             self.temp_settings['theme'] = 'light' if index == 0 else 'dark'
         elif key == 'color_scheme':
@@ -374,6 +390,12 @@ class SettingsDialog(QDialog):
         )
 
         self.setStyleSheet(full_style)
+
+
+# 逐条粘贴的节奏：发完 Cmd+V 要给目标应用留出落字时间，否则多条会挤在一起或丢条。
+PASTE_SETTLE_MS = 160   # 粘贴后等目标应用处理，再发回车
+PASTE_STEP_GAP_MS = 220  # 回车后等下一条
+
 
 class ClipboardWindow(QWidget):
     """剪贴板悬浮窗"""
@@ -546,6 +568,7 @@ class ClipboardWindow(QWidget):
                 on_paste=lambda: self.do_paste_signal.emit(),
                 on_toggle=lambda: self.toggle_window_signal.emit(),
                 on_quit=lambda: self.quit_app_signal.emit(),
+                paste_hotkey=self.settings.get('paste_hotkey', 'ctrl_cmd_v'),
             )
             self._hotkeys_ready = self.hotkey_listener.start()
             if not self._hotkeys_ready:
@@ -554,15 +577,32 @@ class ClipboardWindow(QWidget):
             self._hotkey_error = str(exc)
             QTimer.singleShot(1200, self._notify_hotkey_failure)
 
+    def restart_hotkeys(self):
+        """换快捷键后重建监听器（同一个 tap 不能改匹配规则）。"""
+        old = getattr(self, "hotkey_listener", None)
+        if old is not None:
+            try:
+                old.stop()
+            except Exception:
+                pass
+        self.register_hotkeys()
+
+    def paste_hotkey_text(self):
+        """当前批量粘贴快捷键的显示文本。"""
+        from utils.hotkey_listener import paste_hotkey_label
+        return paste_hotkey_label(self.settings.get('paste_hotkey', 'ctrl_cmd_v'))
+
     def _notify_hotkey_failure(self):
         detail = ""
         listener = getattr(self, "hotkey_listener", None)
         if listener is not None:
             detail = getattr(listener, "error", "") or ""
         detail = detail or getattr(self, "_hotkey_error", "")
-        message = "Cmd+Option+V 未生效。请在辅助功能中勾选“剪贴板助手”后重新打开。"
+        message = "%s 注册失败。" % self.paste_hotkey_text()
         if detail:
-            message = message + " " + detail
+            message = message + detail + " 可在设置里换一个组合键。"
+        else:
+            message = message + "可能已被其它程序占用，可在设置里换一个组合键。"
         self.show_notification(message)
 
     def do_paste(self, steps=None):
@@ -579,7 +619,17 @@ class ClipboardWindow(QWidget):
         self._paste_steps = steps
         self._paste_index = 0
         self._paste_running = True
+
+        # 让用户一眼确认这次按的是哪条规则
+        mode_names = {'comma': '逗号拼接', 'sequential': '顺序逐条', 'reverse': '倒序逐条'}
+        mode_name = mode_names.get(self.clipboard_service.get_output_mode(), '逗号拼接')
+        self.show_notification('正在粘贴 %d 条（%s）' % (len(steps), mode_name))
+
         we_are_front = self.clipboard_service.capture_paste_target()
+        from utils.debug_log import log
+        log("do_paste: steps=%d mode=%s 自己是前台=%s 目标=%s"
+            % (len(steps), mode_name, we_are_front,
+               (self.clipboard_service.previous_window or {}).get('name')))
         if we_are_front:
             self.clipboard_service.restore_previous_window()
             if self.isVisible():
@@ -598,30 +648,53 @@ class ClipboardWindow(QWidget):
             self._finish_paste()
             return
 
+        # 第一条之前确认目标应用在前台，否则按键会发给不相干的地方
+        if self._paste_index == 0:
+            self.clipboard_service.ensure_paste_target()
+
         step = self._paste_steps[self._paste_index]
+        from utils.debug_log import log
         if not self.clipboard_service.place_paste_text(step["text"]):
+            log("paste: 写入剪贴板失败 -> 中止", repr(step["text"])[:30])
             self._finish_paste()
             return
+        log("paste#%d: 已写入剪贴板 %r" % (self._paste_index, step["text"][:20]))
         QTimer.singleShot(60, lambda current=step: self._send_paste_keys(current))
 
     def _send_paste_keys(self, step):
-        """发送粘贴，必要时继续发送回车。"""
-        self.clipboard_service.send_paste_key()
+        """发送粘贴，必要时继续发送回车。失败时明确提示，不再静默无反应。"""
+        ok = self.clipboard_service.send_paste_key()
+        from utils.debug_log import log
+        log("paste#%d: 发送 Cmd+V -> %s（权限=%s）" % (self._paste_index, ok, can_send_keys()))
+        if not ok:
+            self._finish_paste()
+            self._notify_paste_blocked()
+            return
         if step.get("press_enter_after"):
-            QTimer.singleShot(50, self._send_enter_and_continue)
+            QTimer.singleShot(PASTE_SETTLE_MS, self._send_enter_and_continue)
             return
 
         self._paste_index += 1
         if self._paste_index < len(self._paste_steps):
-            QTimer.singleShot(80, self._paste_current_step)
+            QTimer.singleShot(PASTE_STEP_GAP_MS, self._paste_current_step)
         else:
             self._finish_paste()
+
+    def _notify_paste_blocked(self):
+        """辅助功能权限缺失时，粘贴按键会被系统丢掉，这里给出可操作的提示。"""
+        if getattr(self, "_paste_blocked_notified", False):
+            return
+        self._paste_blocked_notified = True
+        self.show_notification(
+            '粘贴失败：请在 系统设置 > 隐私与安全性 > 辅助功能 中勾选“剪贴板助手”'
+            '（重新打包后可能需要先移除旧条目再重新添加），然后重新打开本应用。'
+        )
 
     def _send_enter_and_continue(self):
         """发送回车后处理下一条。"""
         self.clipboard_service.send_enter_key()
         self._paste_index += 1
-        QTimer.singleShot(80, self._paste_current_step)
+        QTimer.singleShot(PASTE_STEP_GAP_MS, self._paste_current_step)
 
     def show_notification(self, message):
         """显示系统通知"""
@@ -674,8 +747,10 @@ class ClipboardWindow(QWidget):
         self.list_widget.setMouseTracking(True)
         self.list_widget.viewport().setMouseTracking(True)
         self.list_widget.viewport().installEventFilter(self)
-        self.list_widget.viewport().setContextMenuPolicy(Qt.CustomContextMenu)
-        self.list_widget.viewport().customContextMenuRequested.connect(self.on_list_context_menu)
+        # 右键菜单策略必须设在 QListWidget 自身：QAbstractScrollArea 会把 viewport 的
+        # ContextMenu 事件转交给它自己的 event() 处理，设在 viewport 上永远不触发。
+        self.list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list_widget.customContextMenuRequested.connect(self.on_list_context_menu)
 
         # 设置统一项目高度以优化性能
         self.list_widget.setUniformItemSizes(True)
@@ -902,7 +977,10 @@ class ClipboardWindow(QWidget):
         self.tray_icon.activated.connect(self.tray_icon_activated)
         self.tray_icon.show()
         # macOS 使用 Command 键
-        self.tray_icon.setToolTip('剪贴板助手\nCmd+Shift+C: 显示/隐藏\nCmd+Option+V: 批量粘贴\nCmd+Shift+Q: 退出\n右键或 F1: 操作说明')
+        self.tray_icon.setToolTip(
+            '剪贴板助手\nCmd+Shift+C: 显示/隐藏\n%s: 批量粘贴\nCmd+Shift+Q: 退出\n右键或 F1: 操作说明'
+            % self.paste_hotkey_text()
+        )
 
     def _connect_window_menu(self, menu):
         menu.show_window_clicked.connect(self.show_window)
@@ -943,10 +1021,12 @@ class ClipboardWindow(QWidget):
         self.context_menu.show_at(global_pos)
 
     def on_list_context_menu(self, pos):
-        """列表记录或空白处的右键菜单。"""
-        global_pos = self.list_widget.viewport().mapToGlobal(pos)
+        """列表记录或空白处的右键菜单。pos 为列表控件坐标。"""
+        viewport = self.list_widget.viewport()
+        viewport_pos = viewport.mapFrom(self.list_widget, pos)
+        global_pos = viewport.mapToGlobal(viewport_pos)
         text = ''
-        index = self.list_widget.indexAt(pos)
+        index = self.list_widget.indexAt(viewport_pos)
         if index.isValid():
             data = index.data(Qt.UserRole)
             if isinstance(data, dict):
@@ -1475,6 +1555,7 @@ class ClipboardWindow(QWidget):
         old_theme = self.settings.get('theme')
         old_output_mode = self.settings.get('output_mode')
         old_color_scheme = self.settings.get('color_scheme')
+        old_paste_hotkey = self.settings.get('paste_hotkey')
         self.settings.update(new_settings)
 
         # 保存设置到数据层
@@ -1484,6 +1565,15 @@ class ClipboardWindow(QWidget):
         if new_settings.get('output_mode') != old_output_mode:
             self.clipboard_service.set_output_mode(new_settings.get('output_mode'))
             self.update_mode_label()  # 更新模式标识
+
+        # 快捷键变了要重建监听器，并把新组合写进托盘提示
+        if new_settings.get('paste_hotkey') != old_paste_hotkey:
+            self.restart_hotkeys()
+            if getattr(self, 'tray_icon', None):
+                self.tray_icon.setToolTip(
+                    '剪贴板助手\nCmd+Shift+C: 显示/隐藏\n%s: 批量粘贴\nCmd+Shift+Q: 退出\n右键或 F1: 操作说明'
+                    % self.paste_hotkey_text()
+                )
 
         # 如果主题或配色方案改变,应用新样式
         if new_settings.get('theme') != old_theme or new_settings.get('color_scheme') != old_color_scheme:
@@ -1599,24 +1689,45 @@ def main():
 
     accessibility_is_trusted(prompt=True)
 
+    from utils.debug_log import log, reset
+    reset()
+    log("=== app 启动 pid=%s ===" % os.getpid())
+    log("辅助功能权限:", can_send_keys())
+
     window = ClipboardWindow()
     window.clipboard_service.save_previous_window()
     window.show()
+    log("快捷键监听:", getattr(window, "_hotkeys_ready", None),
+        "| 粘贴快捷键:", window.paste_hotkey_text(),
+        "| 输出模式:", window.clipboard_service.get_output_mode())
 
-    if not getattr(window, "_hotkeys_ready", False):
+    # 现在快捷键走系统热键注册，不再依赖辅助功能；只有“把 Cmd+V 送进别的应用”需要它。
+    if not getattr(window, "_hotkeys_ready", False) or not can_send_keys():
+        detail = ""
+        listener = getattr(window, "hotkey_listener", None)
+        if listener is not None:
+            detail = getattr(listener, "error", "") or ""
+        parts = []
+        if not can_send_keys():
+            parts.append(
+                "“粘贴”需要辅助功能权限，当前授权没有生效。\n\n"
+                "请打开 系统设置 > 隐私与安全性 > 辅助功能，"
+                "勾选“剪贴板助手”本身，不要只勾选终端或 Python。"
+                "如果列表里是旧的同名应用或重新打包过，先移除旧条目再重新勾选，然后重新打开本应用。"
+            )
+        if not getattr(window, "_hotkeys_ready", False):
+            parts.append("快捷键注册失败：%s" % (detail or "可能已被其它程序占用"))
         QMessageBox.information(
             window,
-            "需要辅助功能权限",
-            "批量粘贴 Cmd+Option+V 需要辅助功能权限。\n\n"
-            "请打开 系统设置 > 隐私与安全性 > 辅助功能，"
-            "勾选“剪贴板助手”本身，不要只勾选终端或 Python。"
-            "如果列表里是旧的同名应用，先移除再重新勾选，然后重新打开。",
+            "还需要一项权限" if parts and not can_send_keys() else "快捷键未生效",
+            "\n\n".join(parts),
         )
 
     if hasattr(window, 'tray_icon') and window.tray_icon:
         window.tray_icon.showMessage(
             '剪贴板助手已启动',
-            'Cmd+Shift+C: 显示/隐藏\nCmd+Option+V: 批量粘贴\nCmd+Shift+Q: 退出\n右键或 F1: 操作说明',
+            'Cmd+Shift+C: 显示/隐藏\n%s: 批量粘贴\nCmd+Shift+Q: 退出\n右键或 F1: 操作说明'
+            % window.paste_hotkey_text(),
             QSystemTrayIcon.Information,
             3000
         )

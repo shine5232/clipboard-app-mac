@@ -127,7 +127,8 @@ class ClipboardDataManager(DataManager):
             default_settings = {
                 'output_mode': 'comma',
                 'theme': 'light',
-                'color_scheme': 'pure_blue'
+                'color_scheme': 'pure_blue',
+                'paste_hotkey': 'ctrl_cmd_v'
             }
 
         loaded_settings = self.load_json(self.settings_file, default={})

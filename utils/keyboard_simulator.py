@@ -66,18 +66,33 @@ def _post_key(key_code, flags=0):
     time.sleep(0.02)
 
 
+def can_send_keys():
+    """当前进程能否把按键事件发给其他应用（辅助功能权限）。"""
+    try:
+        from utils.permissions import accessibility_is_trusted
+        return bool(accessibility_is_trusted())
+    except Exception:
+        return True
+
+
 def simulate_paste():
     """
     模拟 Command+V 粘贴操作
 
+    CGEventPost 在没有辅助功能权限时会被系统静默丢弃。
+    这里仍然照常发送（权限检测本身可能失准），但把检测结果返回给上层，
+    让上层能在“发了也没用”的时候提示用户去授权。
+
     Returns:
-        bool: 成功返回 True,失败返回 False
+        bool: 事件已发出且当前进程有辅助功能权限时返回 True
     """
+    trusted = can_send_keys()
+
     if QUARTZ_AVAILABLE:
         try:
             release_modifiers()
             _post_key(kVK_ANSI_V, kCGEventFlagMaskCommand)
-            return True
+            return trusted
         except Exception:
             return False
 
@@ -93,7 +108,7 @@ def simulate_paste():
         with keyboard.pressed(Key.cmd):
             keyboard.press("v")
             keyboard.release("v")
-        return True
+        return trusted
     except Exception:
         return False
 

@@ -54,3 +54,9 @@ pnpm-debug.log*
 /.env-example
 /*.cursorrules
 /.env
+# 本项目：打包产物与内部记录
+/剪贴板助手-*.zip
+/.workbuddy/
+/venv/
+__pycache__/
+*.pyc

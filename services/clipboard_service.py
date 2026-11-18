@@ -190,7 +190,7 @@ class ClipboardService(QObject):
         else:
             steps = [{"text": ",".join(texts), "press_enter_after": False}]
 
-        self.paste_ignore_until = time.time() + 1.0 + len(steps) * 0.6
+        self.paste_ignore_until = time.time() + 0.8 + len(steps) * 0.45
         self.last_paste_time = time.time()
         return steps
 
@@ -240,6 +240,16 @@ class ClipboardService(QObject):
         if self.previous_window.get("pid") == os.getpid():
             return False
         return bool(set_foreground_window(self.previous_window))
+
+    def ensure_paste_target(self):
+        """粘贴前确认前台确实是之前记录的目标应用，不是就再激活一次。"""
+        target = self.previous_window
+        if not target or target.get("pid") == os.getpid():
+            return True
+        current = get_foreground_window()
+        if current and current.get("pid") == target.get("pid"):
+            return True
+        return self.restore_previous_window()
 
     def load_data(self, data):
         """
